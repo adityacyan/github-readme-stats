@@ -13,20 +13,12 @@ import {
  * @typedef {import("axios").AxiosResponse} AxiosResponse Axios response.
  */
 
-/**
- * Top languages fetcher object.
- *
- * @param {AxiosRequestHeaders} variables Fetcher variables.
- * @param {string} token GitHub token.
- * @returns {Promise<AxiosResponse>} Languages fetcher response.
- */
 const fetcher = (variables, token) => {
   return request(
     {
       query: `
       query userInfo($login: String!) {
         user(login: $login) {
-          # fetch only owner repos & not forks
           repositories(ownerAffiliations: OWNER, isFork: false, first: 100) {
             nodes {
               name
@@ -56,15 +48,6 @@ const fetcher = (variables, token) => {
  * @typedef {import("./types").TopLangData} TopLangData Top languages data.
  */
 
-/**
- * Fetch top languages for a given username.
- *
- * @param {string} username GitHub username.
- * @param {string[]} exclude_repo List of repositories to exclude.
- * @param {number} size_weight Weightage to be given to size.
- * @param {number} count_weight Weightage to be given to count.
- * @returns {Promise<TopLangData>} Top languages data.
- */
 const fetchTopLanguages = async (
   username,
   exclude_repo = [],
@@ -100,15 +83,12 @@ const fetchTopLanguages = async (
   let repoNodes = res.data.data.user.repositories.nodes;
   let repoToHide = {};
 
-  // populate repoToHide map for quick lookup
-  // while filtering out
   if (exclude_repo) {
     exclude_repo.forEach((repoName) => {
       repoToHide[repoName] = true;
     });
   }
 
-  // filter out repositories to be hidden
   repoNodes = repoNodes
     .sort((a, b) => b.size - a.size)
     .filter((name) => !repoToHide[name.name]);
@@ -117,21 +97,14 @@ const fetchTopLanguages = async (
 
   repoNodes = repoNodes
     .filter((node) => node.languages.edges.length > 0)
-    // flatten the list of language nodes
     .reduce((acc, curr) => curr.languages.edges.concat(acc), [])
     .reduce((acc, prev) => {
-      // get the size of the language (bytes)
       let langSize = prev.size;
 
-      // if we already have the language in the accumulator
-      // & the current language name is same as previous name
-      // add the size to the language size and increase repoCount.
       if (acc[prev.node.name] && prev.node.name === acc[prev.node.name].name) {
         langSize = prev.size + acc[prev.node.name].size;
         repoCount += 1;
       } else {
-        // reset repoCount to 1
-        // language must exist in at least one repo to be detected
         repoCount = 1;
       }
       return {
@@ -145,11 +118,19 @@ const fetchTopLanguages = async (
       };
     }, {});
 
+  // Apply size/count weights and custom language adjustments
   Object.keys(repoNodes).forEach((name) => {
-    // comparison index calculation
-    repoNodes[name].size =
-      Math.pow(repoNodes[name].size, size_weight) *
-      Math.pow(repoNodes[name].count, count_weight);
+    let base = Math.pow(repoNodes[name].size, size_weight) *
+               Math.pow(repoNodes[name].count, count_weight);
+
+    // Apply custom multipliers
+    if (name === "Jupyter Notebook") {
+      base *= 0.1; // Downscale
+    } else if (name === "Python") {
+      base *= 2; // Boost
+    }
+
+    repoNodes[name].size = base;
   });
 
   const topLangs = Object.keys(repoNodes)
